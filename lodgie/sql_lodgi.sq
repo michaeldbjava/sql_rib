@@ -1,0 +1,240 @@
+select
+/* Auswahl aller Rechnungen, denen ausschließlich eine Position zugeordnet ist. */    
+        r.re_number as rechnungs_id,
+        /* ********************** Start Änderung Belegnummer ********************************
+         * Wenn es sich um eine Stornierung handelt, printet invoice number original verwenden
+         * Wenn der Spaltenwert der Spalte printed_invoice_number_with_format_original ungleich
+         * einer leeren Zeichenkette ist, verwende r.printed_invoice_number_with_format
+         *
+         * Wenn der Spaltenwert der Spalte printed_invoice_number_with_format_original gleich eine
+         * leere Zeichenkette ist, verwende r.cancellation_belongs_to_invoice
+         *
+         *
+         * */
+        case
+            when r.cancellation_belongs_to_invoice !=''
+            then r.printed_invoice_number_with_format_original
+            else r.printed_invoice_number_with_format
+        end as rechnungs_nr,
+        /*r.printed_invoice_number_format,*/
+        /*r.printed_invoice_number_with_format,*/
+        
+        strftime('%Y-%m-%d',r.re_datum)  as rechnungs_datum,
+        'lodgit' as quelle,
+        case
+            when substr(r.printed_invoice_number_with_format,1,7)='BORNH01' then 'GBR'
+            when substr(r.printed_invoice_number_with_format,1,7)='BORNH02' then 'GR'
+            when substr(r.printed_invoice_number_with_format,1,7) like 'BN06%' then 'GR'
+        end as mandant,
+        case
+            when (r.companyname='') then r.firstname || ' ' || r.lastname
+            else r.companyname
+        end as rechnungs_inhaber,
+        rpos.pos_label as positions_text,
+        rpos.pos_number as positions_id,
+        
+        
+        
+        /*
+         * ********************* Ende Änderung Belegnummer *********************************
+         */
+        
+        
+        /* Buchungstext*/
+        
+        case
+            when r.cancellation_belongs_to_invoice != ''
+            then 'Stornierung von RG: '|| r.printed_invoice_number_with_format_original
+            else 'Rechnung: '|| r.printed_invoice_number_with_format
+        end
+        ||     ' ' ||
+        case
+            when (r.companyname != '')
+            then r.companyname || ' ' || r.firstname || ' ' || r.lastname
+            else r.firstname || ' ' || r.lastname
+        end
+        as rechnungs_text,
+        
+        
+        /* ********************** Start Änderung Konten tauschen ********************************
+         * Wenn es sich um eine Stornierung handelt, müssen Die Konten getauscht werden.
+         *
+         * */
+        case
+            when r.cancellation_belongs_to_invoice != ''
+            then rpos.account
+            else r.debitoraccount
+        end as sollkonto,
+        case
+            when r.cancellation_belongs_to_invoice != ''
+            then r.debitoraccount
+            else rpos.account
+        end as habenkonto,
+        
+        /* ********************** Ende Änderung Konten tauschen ********************************
+         *
+         * */
+        strftime('%Y-%m-%d %H:%M:%S','now')  as export_datum,
+    
+        replace(r.re_zwischensumme,'.',',') as betrag
+    
+    from b_rechnung r left outer join b_rechnung_pos rpos
+        on
+            r.re_number=rpos.re_number
+    inner join
+(
+    select re_number,count(*) anzPositionenProRechnung
+    from b_rechnung_pos
+    where pos_summe !=0 and account!=0 group by re_number having count(*)=1  
+) b2
+on r.re_number=b2.re_number
+where
+r.re_bookingid!=0 and rpos.account !=0 and rpos.pos_summe !=0
+    
+    
+union
+select
+/* Auflistung aller Unterpositionen von Rechnungen mit mehreren Posten */
+        r.re_number as rechnungs_id,
+--        r.printed_invoice_number_with_format as belegnummer,
+        case
+            when r.cancellation_belongs_to_invoice !=''
+            then r.printed_invoice_number_with_format_original
+            else r.printed_invoice_number_with_format
+        end as rechnungs_nr,        
+        strftime('%Y-%m-%d',r.re_datum)  as rechnungs_datum,
+        'lodgit' as quelle,
+        case
+            when substr(r.printed_invoice_number_with_format,1,7)='BORNH01' then 'GBR'
+            when substr(r.printed_invoice_number_with_format,1,7)='BORNH02' then 'GR'
+            when substr(r.printed_invoice_number_with_format,1,7) like 'BN06%' then 'GR'
+        end as mandant,
+        case
+            when (r.companyname='') then r.firstname || ' ' || r.lastname
+            else r.companyname
+        end as rechnungs_inhaber,
+        rpos.pos_label as positions_text,
+        rpos.pos_number as positions_id,
+
+/* ################################################## */
+ 
+        
+        /*Buchungstext  */
+--        rpos.pos_label as text,
+        rpos.pos_label as rechnungs_text,
+        
+--
+--        '' as sollkonto,
+        case
+            when r.cancellation_belongs_to_invoice != ''
+            then rpos.account
+            else ''
+        end as sollkonto,
+--        rpos.account as habenkonto,
+        case
+            when r.cancellation_belongs_to_invoice != ''
+            then ''
+            else rpos.account
+        end as habenkonto,        
+            
+        
+/* ################################################## */        
+        
+        strftime('%Y-%m-%d %H:%M:%S','now')  as export_datum,
+        replace(rpos.pos_summe,'.',',') as betrag
+        
+    
+    from b_rechnung r left outer join b_rechnung_pos rpos
+        on
+            r.re_number=rpos.re_number
+    inner join
+(
+    select re_number,count(*) anzPositionenProRechnung
+    from b_rechnung_pos
+    where pos_summe !=0 and account!=0 group by re_number having count(*)>1  
+) b2
+on r.re_number=b2.re_number
+where
+r.re_bookingid!=0 and rpos.account !=0 and rpos.pos_summe !=0
+ 
+
+UNION
+
+select
+/* Ergänzung der Gesamtsummenzeile für Rechnungen mit mehreren Posten*/
+        r.re_number as rechnungs_id,
+        /*r.printed_invoice_number_format,*/
+        
+        --        r.printed_invoice_number_with_format as belegnummer,
+        case
+            when r.cancellation_belongs_to_invoice !=''
+            then r.printed_invoice_number_with_format_original
+            else r.printed_invoice_number_with_format
+        end as rechnungs_nr,
+        
+        strftime('%Y-%m-%d',r.re_datum)  as rechnungs_datum,
+        'lodgit' as quelle,
+        case
+            when substr(r.printed_invoice_number_with_format,1,7)='BORNH01' then 'GBR'
+            when substr(r.printed_invoice_number_with_format,1,7)='BORNH02' then 'GR'
+            when substr(r.printed_invoice_number_with_format,1,7) like 'BN06%' then 'GR'
+        end as mandant,
+        case
+            when (r.companyname='') then r.firstname || ' ' || r.lastname
+            else r.companyname
+        end as rechnungs_inhaber,
+        
+        '' as positions_text,
+        0 as positions_id,
+/* ########################### */        
+        
+
+        /*Buchungstext */
+        case
+            when r.cancellation_belongs_to_invoice != ''
+            then 'Stornierung von RG: '|| r.printed_invoice_number_with_format_original
+            else 'Rechnung: '|| r.printed_invoice_number_with_format
+        end
+        ||     ' ' ||
+        case
+            when (r.companyname != '')
+            then r.companyname || ' ' || r.firstname || ' ' || r.lastname
+            else r.firstname || ' ' || r.lastname
+        end
+        as rechnungs_text,
+        
+--
+--        r.debitoraccount as sollkonto,
+        case
+            when r.cancellation_belongs_to_invoice != ''
+            then ''
+            else r.debitoraccount
+        end as sollkonto,
+        
+--        '' as habenkonto,
+        case
+            when r.cancellation_belongs_to_invoice != ''
+            then r.debitoraccount
+            else ''
+        end as habenkonto,        
+ 
+    
+        
+/* ########################### */        
+        strftime('%Y-%m-%d  %H:%M:%S','now')  as export_datum,
+        replace(r.re_zwischensumme,'.',',') as betrag
+        
+    
+    from b_rechnung r
+    inner join
+(
+    select re_number,count(*) anzPositionenProRechnung
+    from b_rechnung_pos
+    where pos_summe !=0 and account!=0 group by re_number having count(*)>1  
+) b2
+on r.re_number=b2.re_number
+where
+r.re_bookingid!=0
+order by rechnungs_nr, r.re_number, pos_number;
+
+	
